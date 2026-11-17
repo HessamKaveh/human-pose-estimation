@@ -19,7 +19,7 @@ KEYPOINT_NAMES = [
 
 
 class SyntheticPoseDataset(Dataset):
-    """دیتاست مصنوعی برای تدریس pose estimation"""
+    """Synthetic dataset for demonstrating pose estimation"""
     def __init__(self, num_samples=200, img_size=256):
         self.num_samples = num_samples
         self.img_size = img_size
@@ -29,19 +29,19 @@ class SyntheticPoseDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        # تصویر سفید (تنها برای demo)
+        # white image (demo only)
         img = np.ones((self.img_size, self.img_size, 3), dtype=np.uint8) * 200
 
-        # ۱۷ مفصل تصادفی
+        # 17 random joints
         keypoints = np.random.rand(self.num_keypoints, 2)
         keypoints[:, 0] *= self.img_size
         keypoints[:, 1] *= self.img_size
 
-        # رسم دایره‌های کوچک برای keypoints
+        # draw small circles for the keypoints
         for kp in keypoints:
             cv2.circle(img, tuple(map(int, kp)), 3, (0, 255, 0), -1)
 
-        # ایجاد heatmap
+        # build the heatmaps
         heatmap = np.zeros((self.num_keypoints, self.img_size, self.img_size), dtype=np.float32)
         sigma = 10
         for k, kp in enumerate(keypoints):

@@ -14,7 +14,7 @@ MODEL_PATH = os.path.join(RESULTS_DIR, "best_pose_model.pt")
 
 
 def extract_keypoints(heatmaps):
-    """استخراج مختصات keypoints از heatmaps"""
+    """Extract keypoint coordinates from heatmaps"""
     keypoints = []
     for i in range(heatmaps.shape[0]):
         hm = heatmaps[i].cpu().numpy()
@@ -49,7 +49,7 @@ def evaluate():
         axes[i, 1].imshow(gt_sum, cmap="jet"); axes[i, 1].set_title("GT Heatmaps (sum)"); axes[i, 1].axis("off")
         axes[i, 2].imshow(pred_sum, cmap="jet"); axes[i, 2].set_title("Pred Heatmaps (sum)"); axes[i, 2].axis("off")
 
-        # رسم keypoints بر روی تصویر
+        # draw keypoints on the image
         img_with_kps = img.copy()
         pred_kps = extract_keypoints(pred_heatmaps[i])
         for kp in pred_kps:

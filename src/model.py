@@ -11,7 +11,7 @@ def conv_bn_relu(in_ch, out_ch):
 
 
 class SimplePoseNet(nn.Module):
-    """شبکه ساده برای تشخیص ۱۷ مفصل انسان (COCO format)"""
+    """Simple network that predicts 17 human keypoints (COCO format)"""
     def __init__(self, num_keypoints=17):
         super().__init__()
         self.num_keypoints = num_keypoints
