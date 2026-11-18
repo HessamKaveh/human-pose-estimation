@@ -1,79 +1,99 @@
-import os
+"""Train SimpleBaseline on COCO-2017 train keypoints.
+
+    python src/train.py --backbone resnet50 --epochs 20
+"""
+import argparse
+import copy
 import json
+import os
+import time
+
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
 
-from dataset import get_dataloaders
-from model import SimplePoseNet
+from dataset import CocoKeypoints
+from model import SimpleBaseline
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
-os.makedirs(RESULTS_DIR, exist_ok=True)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def train():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+def collate(batch):
+    x, t, v, _ = zip(*batch)
+    return torch.stack(x), torch.stack(t), torch.stack(v)
 
-    train_loader, test_loader = get_dataloaders(batch_size=16)
 
-    model = SimplePoseNet(num_keypoints=17).to(device)
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--backbone", default="resnet50")
+    ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--hours", type=float, default=None, help="time budget; overrides --epochs")
+    ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--workers", type=int, default=14)
+    ap.add_argument("--resume", action="store_true")
+    args = ap.parse_args()
 
-    num_epochs = 10
-    history = {"train_loss": [], "test_loss": []}
-    best_loss = float("inf")
+    torch.manual_seed(0)
+    torch.backends.cudnn.benchmark = True
+    dev = torch.device("cuda")
+    ds = CocoKeypoints("train")
+    dl = DataLoader(ds, batch_size=args.batch, shuffle=True, num_workers=args.workers, pin_memory=True,
+                    drop_last=True, collate_fn=collate, persistent_workers=True, prefetch_factor=4)
+    model = SimpleBaseline(args.backbone).to(dev).to(memory_format=torch.channels_last)
+    if args.hours and not args.resume:
+        # time budget: measure the real throughput (data loading included), then pick the epoch count
+        init = copy.deepcopy(model.state_dict())
+        probe = torch.optim.SGD(model.parameters(), lr=0.0)
+        it_dl = iter(dl)
+        for k in range(60):
+            if k == 10:
+                torch.cuda.synchronize(); t_start = time.time()
+            x, t, v = next(it_dl)
+            with torch.autocast("cuda", dtype=torch.float16):
+                out = model(x.to(dev).to(memory_format=torch.channels_last))
+            l = ((out.float() - t.to(dev)) ** 2).mean()
+            probe.zero_grad(); l.backward(); probe.step()
+        torch.cuda.synchronize()
+        sec_it = (time.time() - t_start) / 50
+        model.load_state_dict(init); del probe, it_dl
+        args.epochs = max(1, int(args.hours * 3600 / (sec_it * len(dl))))
+        print(f"{sec_it:.3f} s/it -> {args.epochs} epochs in {args.hours} h", flush=True)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    total = args.epochs * len(dl)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=total, pct_start=0.03)
+    scaler = torch.amp.GradScaler()
+    ckpt = os.path.join(ROOT, "checkpoints", f"simplebaseline_{args.backbone}.pt")
+    os.makedirs(os.path.dirname(ckpt), exist_ok=True)
+    start, hist = 0, {"loss": []}
+    if args.resume and os.path.exists(ckpt + ".state"):
+        st = torch.load(ckpt + ".state", map_location=dev, weights_only=False)
+        model.load_state_dict(st["model"]); opt.load_state_dict(st["opt"]); sched.load_state_dict(st["sched"])
+        start, hist = st["epoch"], st["hist"]
 
-    for epoch in range(num_epochs):
+    t0 = time.time()
+    for ep in range(start, args.epochs):
         model.train()
-        running_loss = 0.0
-        for images, heatmaps in train_loader:
-            images, heatmaps = images.to(device), heatmaps.to(device)
-            optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, heatmaps)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item() * images.size(0)
-
-        train_loss = running_loss / len(train_loader.dataset)
-
-        model.eval()
-        test_loss = 0.0
-        with torch.no_grad():
-            for images, heatmaps in test_loader:
-                images, heatmaps = images.to(device), heatmaps.to(device)
-                outputs = model(images)
-                loss = criterion(outputs, heatmaps)
-                test_loss += loss.item() * images.size(0)
-
-        test_loss /= len(test_loader.dataset)
-
-        history["train_loss"].append(train_loss)
-        history["test_loss"].append(test_loss)
-
-        print(f"Epoch {epoch+1}/{num_epochs} | Train Loss: {train_loss:.6f} | Test Loss: {test_loss:.6f}")
-
-        if test_loss < best_loss:
-            best_loss = test_loss
-            torch.save(model.state_dict(), os.path.join(RESULTS_DIR, "best_pose_model.pt"))
-
-    with open(os.path.join(RESULTS_DIR, "history.json"), "w") as f:
-        json.dump(history, f, indent=2)
-
-    plt.figure(figsize=(6, 4))
-    plt.plot(history["train_loss"], label="Train Loss")
-    plt.plot(history["test_loss"], label="Test Loss")
-    plt.legend(); plt.title("Pose Estimation Training")
-    plt.xlabel("Epoch"); plt.ylabel("MSE Loss")
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "training_curves.png"))
-    print(f"\nBest test loss: {best_loss:.6f}")
+        s, n = 0.0, 0
+        for it, (x, t, v) in enumerate(dl):
+            x = x.to(dev, non_blocking=True).to(memory_format=torch.channels_last)
+            t, v = t.to(dev, non_blocking=True), v.to(dev, non_blocking=True)
+            with torch.autocast("cuda", dtype=torch.float16):
+                out = model(x)
+            # joints-MSE with target weights (invisible / out-of-crop joints are ignored)
+            loss = 0.5 * (((out.float() - t) ** 2).mean((2, 3)) * v).mean()
+            opt.zero_grad(set_to_none=True)
+            scaler.scale(loss).backward(); scaler.step(opt); scaler.update(); sched.step()
+            s += loss.item(); n += 1
+            if it % 500 == 0:
+                print(f"ep {ep + 1} it {it}/{len(dl)} loss {s / n:.6f} {(time.time() - t0) / 60:.1f} min", flush=True)
+        hist["loss"].append(s / n)
+        torch.save(model.state_dict(), ckpt)
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
+                    "epoch": ep + 1, "hist": hist}, ckpt + ".state")
+        print(f"epoch {ep + 1} done, loss {s / n:.6f}", flush=True)
+    os.makedirs(os.path.join(ROOT, "results"), exist_ok=True)
+    json.dump(hist, open(os.path.join(ROOT, "results", f"history_{args.backbone}.json"), "w"))
 
 
 if __name__ == "__main__":
-    train()
+    main()

@@ -1,6 +1,6 @@
-torch
+torch>=2.1
 torchvision
 opencv-python
 numpy
 matplotlib
-scikit-image
+pycocotools

@@ -1,70 +1,28 @@
-import torch
+"""SimpleBaseline (Xiao et al., ECCV 2018): ImageNet ResNet backbone + 3 deconvolution layers -> 17 heatmaps."""
 import torch.nn as nn
+from torchvision.models import resnet18, resnet50, ResNet18_Weights, ResNet50_Weights
+
+BACKBONES = {"resnet18": (resnet18, ResNet18_Weights.IMAGENET1K_V1, 512),
+             "resnet50": (resnet50, ResNet50_Weights.IMAGENET1K_V2, 2048)}
 
 
-def conv_bn_relu(in_ch, out_ch):
-    return nn.Sequential(
-        nn.Conv2d(in_ch, out_ch, 3, padding=1),
-        nn.BatchNorm2d(out_ch),
-        nn.ReLU(inplace=True),
-    )
-
-
-class SimplePoseNet(nn.Module):
-    """Simple network that predicts 17 human keypoints (COCO format)"""
-    def __init__(self, num_keypoints=17):
+class SimpleBaseline(nn.Module):
+    def __init__(self, backbone="resnet50", num_joints=17, pretrained=True, deconv_ch=256):
         super().__init__()
-        self.num_keypoints = num_keypoints
+        fn, w, cin = BACKBONES[backbone]
+        r = fn(weights=w if pretrained else None)
+        self.backbone = nn.Sequential(r.conv1, r.bn1, r.relu, r.maxpool, r.layer1, r.layer2, r.layer3, r.layer4)
+        layers = []
+        for _ in range(3):
+            layers += [nn.ConvTranspose2d(cin, deconv_ch, 4, 2, 1, bias=False), nn.BatchNorm2d(deconv_ch),
+                       nn.ReLU(True)]
+            cin = deconv_ch
+        self.deconv = nn.Sequential(*layers)
+        self.head = nn.Conv2d(deconv_ch, num_joints, 1)
+        for m in self.deconv.modules():
+            if isinstance(m, nn.ConvTranspose2d):
+                nn.init.normal_(m.weight, std=0.001)
+        nn.init.normal_(self.head.weight, std=0.001); nn.init.zeros_(self.head.bias)
 
-        # Encoder
-        self.conv1 = conv_bn_relu(3, 32)
-        self.conv2 = conv_bn_relu(32, 64)
-        self.pool1 = nn.MaxPool2d(2)
-
-        self.conv3 = conv_bn_relu(64, 64)
-        self.conv4 = conv_bn_relu(64, 128)
-        self.pool2 = nn.MaxPool2d(2)
-
-        self.conv5 = conv_bn_relu(128, 128)
-        self.conv6 = conv_bn_relu(128, 256)
-        self.pool3 = nn.MaxPool2d(2)
-
-        # Decoder (upsampling)
-        self.up1 = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv7 = conv_bn_relu(256, 128)
-
-        self.up2 = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv8 = conv_bn_relu(128, 64)
-
-        self.up3 = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv9 = conv_bn_relu(64, 32)
-
-        # Heatmap output: (B, num_keypoints, H, W)
-        self.heatmap_out = nn.Conv2d(32, num_keypoints, 1)
-
-    def forward(self, x):
-        # Encoder
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.pool1(x)  # H/2
-
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.pool2(x)  # H/4
-
-        x = self.conv5(x)
-        x = self.conv6(x)
-        x = self.pool3(x)  # H/8
-
-        # Decoder
-        x = self.up1(x)
-        x = self.conv7(x)
-
-        x = self.up2(x)
-        x = self.conv8(x)
-
-        x = self.up3(x)
-        x = self.conv9(x)
-
-        heatmaps = self.heatmap_out(x)
-        return heatmaps
+    def forward(self, x):                      # (B, 3, 256, 192) -> (B, 17, 64, 48)
+        return self.head(self.deconv(self.backbone(x)))
