@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "2D Human Pose Estimation on COCO (SimpleBaseline, ResNet-50)"
+authors:
+  - family-names: Kaveh
+    given-names: Hessam
+    affiliation: "Istituto Italiano di Tecnologia (IIT)"
+repository-code: "https://github.com/HessamKaveh/human-pose-estimation"
+license: MIT
+version: 1.0.0
+date-released: 2026-11-23

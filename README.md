@@ -1,10 +1,12 @@
 # 2D Human Pose Estimation on COCO (SimpleBaseline, ResNet-50)
 
+[![CI](https://github.com/HessamKaveh/human-pose-estimation/actions/workflows/ci.yml/badge.svg)](https://github.com/HessamKaveh/human-pose-estimation/actions/workflows/ci.yml) ![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg) ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c.svg?logo=pytorch&logoColor=white) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A from-scratch PyTorch reimplementation of the top-down **SimpleBaseline** pose estimator (Xiao et al., *Simple Baselines for Human Pose Estimation and Tracking*, ECCV 2018). It is trained on the full **COCO-2017 keypoints** set (149,813 annotated people) and evaluated with the official COCO OKS metric on val2017.
 
-<p align="center"><img src="results/val2017_predictions.png" width="90%"></p>
+<p align="center"><img src="results/hero_coco_val2017.jpg" width="95%"></p>
 
-*Predictions on unseen val2017 images (GT person boxes, 17 COCO keypoints).*
+*Fully automatic top-down pipeline on unseen COCO val2017 images (Flickr photos, Creative Commons licences listed in the COCO annotations): person boxes from an off-the-shelf COCO YOLO11s detector, keypoints from our SimpleBaseline-R50 with flip test. Orange = left limbs, blue = right.*
 
 ## Results: COCO val2017, ground-truth person boxes
 
@@ -19,6 +21,10 @@ The paper row uses detected person boxes (56.4 person AP detector) rather than g
 - With **1/7 of the paper's schedule** (20 epochs, a 4-hour budget on a 4 GB laptop GPU), the model reaches 68.7 AP, within ~2 AP of the paper's 140-epoch number. The loss curve was still falling at the end, so a longer schedule would improve it further.
 - **Large people are easier than medium ones** (72.5 vs 66.2 AP). At 256×192 a medium-sized person covers few heatmap pixels, so quantisation error dominates.
 - **Sanity check of the evaluation pipeline:** encoding the ground-truth keypoints to heatmaps and decoding them back gives **96.1 AP**. Crop, affine warp, heatmap decoding and the COCO evaluation are therefore consistent, and the remaining gap is the model's.
+
+<p align="center"><img src="results/val2017_predictions.png" width="90%"></p>
+
+*Predictions on unseen val2017 images (GT person boxes, 17 COCO keypoints).*
 
 <p align="center"><img src="results/training_curves.png" width="50%"></p>
 
